@@ -336,9 +336,9 @@ static int precompile_enq_specialization_(jl_method_instance_t *mi, void *closur
         int do_compile = 0;
         if (jl_atomic_load_relaxed(&codeinst->invoke) != jl_fptr_const_return) {
             jl_value_t *inferred = jl_atomic_load_relaxed(&codeinst->inferred);
-            if (codeinst->inferred && codeinst->inferred != jl_nothing &&
-                jl_ir_flag_inferred((jl_array_t*)codeinst->inferred) &&
-                !jl_ir_flag_inlineable((jl_array_t*)codeinst->inferred)) {
+            if (inferred && inferred != jl_nothing &&
+                jl_ir_flag_inferred((jl_array_t*)inferred) &&
+                !jl_ir_flag_inlineable((jl_array_t*)inferred)) {
                 do_compile = 1;
             }
             else if (jl_atomic_load_relaxed(&codeinst->invoke) != NULL || jl_atomic_load_relaxed(&codeinst->precompile)) {

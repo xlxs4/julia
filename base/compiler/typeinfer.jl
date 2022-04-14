@@ -227,11 +227,7 @@ function finish!(interp::AbstractInterpreter, caller::InferenceResult)
 end
 
 function _typeinf(interp::AbstractInterpreter, frame::InferenceState)
-    ccall(:jl_typeinf_begin, Cvoid, ())
-    if !typeinf_nocycle(interp, frame)
-        ccall(:jl_typeinf_end, Cvoid, ()) # frame is now part of a higher cycle
-        return false
-    end
+    !typeinf_nocycle(interp, frame) && return false
     # with no active ip's, frame is done
     frames = frame.callers_in_cycle
     isempty(frames) && push!(frames, frame)
@@ -282,7 +278,6 @@ function _typeinf(interp::AbstractInterpreter, frame::InferenceState)
         end
         finish!(interp, caller)
     end
-    ccall(:jl_typeinf_end, Cvoid, ())
     return true
 end
 
@@ -381,6 +376,7 @@ function transform_result_for_cache(interp::AbstractInterpreter, linfo::MethodIn
 end
 
 function cache_result!(interp::AbstractInterpreter, result::InferenceResult)
+    ccall(:jl_typeinf_begin, Cvoid, ())
     valid_worlds = result.valid_worlds
     if last(valid_worlds) == get_world_counter()
         # if we've successfully recorded all of the backedges in the global reverse-cache,
@@ -407,6 +403,7 @@ function cache_result!(interp::AbstractInterpreter, result::InferenceResult)
         end
     end
     unlock_mi_inference(interp, linfo)
+    ccall(:jl_typeinf_end, Cvoid, ())
     nothing
 end
 
@@ -933,44 +930,42 @@ end
 # compute (and cache) an inferred AST and return type
 function typeinf_ext(interp::AbstractInterpreter, mi::MethodInstance)
     method = mi.def::Method
-    for i = 1:2 # test-and-lock-and-test
-        code = get(code_cache(interp), mi, nothing)
-        if code isa CodeInstance
-            # see if this code already exists in the cache
-            inf = @atomic :monotonic code.inferred
-            if use_const_api(code)
-                tree = ccall(:jl_new_code_info_uninit, Ref{CodeInfo}, ())
-                rettype_const = code.rettype_const
-                tree.code = Any[ ReturnNode(quoted(rettype_const)) ]
-                nargs = Int(method.nargs)
-                tree.slotnames = ccall(:jl_uncompress_argnames, Vector{Symbol}, (Any,), method.slot_syms)
-                tree.slotflags = fill(IR_FLAG_NULL, nargs)
-                tree.ssavaluetypes = 1
-                tree.codelocs = Int32[1]
-                tree.linetable = [LineInfoNode(method.module, method.name, method.file, Int(method.line), 0)]
-                tree.inferred = true
-                tree.ssaflags = UInt8[0]
-                tree.pure = true
-                tree.inlineable = true
-                tree.parent = mi
-                tree.rettype = Core.Typeof(rettype_const)
-                tree.min_world = code.min_world
-                tree.max_world = code.max_world
-                return tree
-            elseif isa(inf, CodeInfo)
-                if !(inf.min_world == code.min_world &&
-                     inf.max_world == code.max_world &&
-                     inf.rettype === code.rettype)
-                    inf = copy(inf)
-                    inf.min_world = code.min_world
-                    inf.max_world = code.max_world
-                    inf.rettype = code.rettype
-                end
-                return inf
-            elseif isa(inf, Vector{UInt8})
-                inf = _uncompressed_ir(code, inf)
-                return inf
+    code = get(code_cache(interp), mi, nothing)
+    if code isa CodeInstance
+        # see if this code already exists in the cache
+        inf = @atomic :monotonic code.inferred
+        if use_const_api(code)
+            tree = ccall(:jl_new_code_info_uninit, Ref{CodeInfo}, ())
+            rettype_const = code.rettype_const
+            tree.code = Any[ ReturnNode(quoted(rettype_const)) ]
+            nargs = Int(method.nargs)
+            tree.slotnames = ccall(:jl_uncompress_argnames, Vector{Symbol}, (Any,), method.slot_syms)
+            tree.slotflags = fill(IR_FLAG_NULL, nargs)
+            tree.ssavaluetypes = 1
+            tree.codelocs = Int32[1]
+            tree.linetable = [LineInfoNode(method.module, method.name, method.file, Int(method.line), 0)]
+            tree.inferred = true
+            tree.ssaflags = UInt8[0]
+            tree.pure = true
+            tree.inlineable = true
+            tree.parent = mi
+            tree.rettype = Core.Typeof(rettype_const)
+            tree.min_world = code.min_world
+            tree.max_world = code.max_world
+            return tree
+        elseif isa(inf, CodeInfo)
+            if !(inf.min_world == code.min_world &&
+                    inf.max_world == code.max_world &&
+                    inf.rettype === code.rettype)
+                inf = copy(inf)
+                inf.min_world = code.min_world
+                inf.max_world = code.max_world
+                inf.rettype = code.rettype
             end
+            return inf
+        elseif isa(inf, Vector{UInt8})
+            inf = _uncompressed_ir(code, inf)
+            return inf
         end
     end
     if ccall(:jl_get_module_infer, Cint, (Any,), method.module) == 0 && !generating_sysimg()
@@ -1013,13 +1008,11 @@ function typeinf_ext_toplevel(interp::AbstractInterpreter, linfo::MethodInstance
         src = linfo.uninferred::CodeInfo
         if !src.inferred
             # toplevel lambda - infer directly
-            if !src.inferred
-                result = InferenceResult(linfo)
-                frame = InferenceState(result, src, #=cache=#:global, interp)
-                typeinf(interp, frame)
-                @assert frame.inferred # TODO: deal with this better
-                src = frame.src
-            end
+            result = InferenceResult(linfo)
+            frame = InferenceState(result, src, #=cache=#:global, interp)
+            typeinf(interp, frame)
+            @assert frame.inferred # TODO: deal with this better
+            src = frame.src
         end
     end
     return src

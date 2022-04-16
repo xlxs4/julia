@@ -2541,9 +2541,9 @@ void jl_init_types(void) JL_GC_DISABLED
                         jl_emptysvec,
                         0, 1, 1);
     jl_svecset(jl_code_instance_type->types, 1, jl_code_instance_type);
-    const static uint32_t code_instance_constfields[1] = { 0x00000001 }; // (1<<1);
+    const static uint32_t code_instance_constfields[1] = { 0b0000000010001111 }; // Fields 1-4, 8
     jl_code_instance_type->name->constfields = code_instance_constfields;
-    const static uint32_t code_instance_atomicfields[1] = { (1 << (7 - 1)) | (0b111 << (12 - 1)) }; // (Fields 7, 12, 13, 14)
+    const static uint32_t code_instance_atomicfields[1] = { 0b0011100101000000 }; // Fields 7, 9, 12, 13, 14
     jl_code_instance_type->name->atomicfields = code_instance_atomicfields;
 
     jl_const_type = jl_new_datatype(jl_symbol("Const"), core, jl_any_type, jl_emptysvec,

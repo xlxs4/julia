@@ -3,6 +3,7 @@
 # Tracking of newly-inferred MethodInstances during precompilation
 const track_newly_inferred = RefValue{Bool}(false)
 const newly_inferred = MethodInstance[]
+const consume = :monotonic
 
 # build (and start inferring) the inference frame for the top-level MethodInstance
 function typeinf(interp::AbstractInterpreter, result::InferenceResult, cache::Symbol)
@@ -376,7 +377,6 @@ function transform_result_for_cache(interp::AbstractInterpreter, linfo::MethodIn
 end
 
 function cache_result!(interp::AbstractInterpreter, result::InferenceResult)
-    ccall(:jl_typeinf_begin, Cvoid, ())
     valid_worlds = result.valid_worlds
     if last(valid_worlds) == get_world_counter()
         # if we've successfully recorded all of the backedges in the global reverse-cache,
@@ -395,15 +395,16 @@ function cache_result!(interp::AbstractInterpreter, result::InferenceResult)
     if !already_inferred
         inferred_result = transform_result_for_cache(interp, linfo, valid_worlds, result.src, result.ipo_effects)
         code_cache(interp)[linfo] = CodeInstance(result, inferred_result, valid_worlds)
+        ccall(:jl_typeinf_begin, Cvoid, ())
         if track_newly_inferred[]
             m = linfo.def
             if isa(m, Method)
                 m.module != Core && push!(newly_inferred, linfo)
             end
         end
+        ccall(:jl_typeinf_end, Cvoid, ())
     end
     unlock_mi_inference(interp, linfo)
-    ccall(:jl_typeinf_end, Cvoid, ())
     nothing
 end
 
@@ -933,7 +934,7 @@ function typeinf_ext(interp::AbstractInterpreter, mi::MethodInstance)
     code = get(code_cache(interp), mi, nothing)
     if code isa CodeInstance
         # see if this code already exists in the cache
-        inf = @atomic :monotonic code.inferred
+        inf = @atomic consume code.inferred
         if use_const_api(code)
             tree = ccall(:jl_new_code_info_uninit, Ref{CodeInfo}, ())
             rettype_const = code.rettype_const
